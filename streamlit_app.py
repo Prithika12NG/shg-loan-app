@@ -32,6 +32,12 @@ if df is None:
     st.error("CSV not found")
 else:
     st.success(f"Loaded: {os.path.basename(filename)} | Total Members: {len(df)}")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total Members", len(df))
+    col2.metric("Panchayats", df[find_column(df, "Panchayat")].nunique() if find_column(df, "Panchayat") else "N/A")
+    col3.metric("File", os.path.basename(filename)[:15])
+
+    st.markdown("---")
 
     # FIXED: Use form - 1 click works always
     with st.form("check_form", clear_on_submit=False):
@@ -63,13 +69,13 @@ else:
                 reasons = []
 
                 if 'VERIFIED' in aadhaar_val or 'YES' in aadhaar_val:
-                    reasons.append(f"✅ Aadhaar KYC: {aadhaar_val}")
+                    reasons.append(f"✅ Aadhaar KYC : Verified")
                 else:
                     eligible = False
-                    reasons.append(f"❌ Aadhaar KYC Not Verified: {aadhaar_val}")
+                    reasons.append(f"❌ Aadhaar KYC Not Verified : Not Verified")
 
                 if acc_val and acc_val.upper() not in ['NAN', 'NONE', '-', '0'] and len(acc_val) >= 4:
-                    reasons.append(f"✅ Bank Account Linked: {acc_val}")
+                    reasons.append(f"✅ Bank Account: Linked (Secure)")
                 else:
                     eligible = False
                     reasons.append("❌ Bank Account Not Linked")
@@ -85,9 +91,16 @@ else:
                     st.write(r)
 
                 st.markdown("### Member Details")
-                st.dataframe(pd.DataFrame([row]))
+                # SAFE - Show only non-sensitive columns
+                safe_cols = [find_column(df, "Member"), find_column(df, "SHG"), find_column(df, "Panchayat"), find_column(df, "Block")]
+                safe_cols = [c for c in safe_cols if c is not None]
+                safe_data = row[safe_cols].to_frame().T if safe_cols else pd.DataFrame([row])
+                st.dataframe(safe_data)
+
+                # Don't show Aadhaar or Account number full - mask it
+                st.write(f"🔒 Aadhaar KYC Status: {'Verified' if 'VERIFIED' in aadhaar_val or 'YES' in aadhaar_val else 'Not Verified'}")
+                st.write(f"🔒 Bank Account: {'Linked' if len(acc_val)>=4 else 'Not Linked'} (Number hidden for privacy)")
 
                 # Auto-clear for next search - helps mobile
                 st.info("👉 Enter next Member Code above and click CHECK again - will work in 1 click now!")
-
 st.caption("TNRTP | Ellapuram | 1-Click Fixed")
