@@ -1,61 +1,106 @@
-# --- REPLACE YOUR OLD eligible=True PART WITH THIS ---
+import streamlit as st
+import pandas as pd
+import os, glob
 
-st.markdown("### Check Eligibility with Amount")
+st.set_page_config(page_title="SHG Loan Eligibility - Ellapuram", page_icon="🏦", layout="centered")
 
-member_id = st.text_input("Enter Member ID (from sample_data.csv)")
-loan_amount = st.number_input("Required Loan Amount", min_value=1000, step=1000)
+@st.cache_data
+def load_data():
+    script_folder = os.path.dirname(os.path.abspath(__file__))
+    files = glob.glob(os.path.join(script_folder, "*.csv"))
+    if not files:
+        files = glob.glob(os.path.join(script_folder, "*.xlsx"))
+    if files:
+        try:
+            df = pd.read_csv(files[0]) if files[0].endswith('.csv') else pd.read_excel(files[0])
+            return df
+        except:
+            return None
+    return None
 
-if st.button("Check with Sample Data"):
-    if df is not None and member_id!= "":
-        # Find member in your data
-        member_row = df[df.astype(str).apply(lambda x: x.str.contains(member_id, case=False)).any(axis=1)]
+st.sidebar.title("🔐 Login")
+role = st.sidebar.selectbox("Select Role", ["SHG Member", "SHG Leader", "Bank Officer"])
+username = st.sidebar.text_input("Username")
+password = st.sidebar.text_input("Password", type="password")
+login_ok = False
 
-        if not member_row.empty:
-            row = member_row.iloc[0]
-            st.write("Found Member Data:", row)
-
-            # Try to find savings column - auto detect
-            savings_col = None
-            for col in df.columns:
-                if 'saving' in col.lower() or 'thrift' in col.lower() or 'balance' in col.lower():
-                    savings_col = col
-                    break
-
-            if savings_col:
-                savings = float(row[savings_col])
-                st.write(f"Your Savings: Rs.{savings}")
-                st.write(f"Asking Loan: Rs.{loan_amount}")
-
-                # REAL BANK LOGIC
-                max_eligible = savings * 4 # Bank gives 4x of savings
-                reasons = []
-                eligible = True
-
-                if loan_amount <= max_eligible:
-                    reasons.append(f"✅ Amount OK: You can get upto Rs.{max_eligible} (4x savings)")
-                else:
-                    reasons.append(f"❌ Amount Too High: You saved Rs.{savings}, so max eligible is Rs.{max_eligible}")
-                    eligible = False
-
-                # Check repayment if column exists
-                for col in df.columns:
-                    if 'due' in col.lower() or 'overdue' in col.lower() or 'defaulter' in col.lower():
-                        if str(row[col]).lower() in ['yes','1','true','overdue']:
-                            reasons.append("❌ Past Due Found")
-                            eligible = False
-
-                st.markdown("---")
-                if eligible:
-                    st.success(f"✅ ELIGIBLE FOR Rs.{loan_amount}")
-                    st.balloons()
-                else:
-                    st.error(f"❌ NOT ELIGIBLE FOR Rs.{loan_amount}")
-
-                for r in reasons:
-                    st.write(r)
-            else:
-                st.warning("Could not find Savings column in your CSV. Tell me column names")
-        else:
-            st.error(f"Member ID {member_id} not found in sample_data.csv")
+if st.sidebar.button("Login"):
+    if (role=="Bank Officer" and username=="officer" and password=="officer123") or \
+       (role=="SHG Leader" and username=="leader" and password=="leader123") or \
+       (role=="SHG Member" and username=="member" and password=="member123"):
+        st.session_state['logged_in']=True
+        st.session_state['role']=role
+        login_ok=True
+        st.sidebar.success(f"Welcome {role}")
     else:
-        st.error("Enter Member ID")
+        st.sidebar.error("Use officer/officer123")
+        st.session_state['logged_in']=False
+
+# Load data
+df = load_data()
+
+if 'logged_in' in st.session_state and st.session_state['logged_in']:
+
+    if st.session_state['role'] == "Bank Officer":
+        st.title("🏦 Bank Officer Dashboard")
+        st.subheader("Ellapuram Block - All Applications")
+        if df is not None:
+            st.dataframe(df.head(30))
+            sel = st.selectbox("Select Member ID", df.iloc[:,0].astype(str))
+            c1,c2=st.columns(2)
+            with c1:
+                if st.button("✅ Approve Loan"):
+                    st.success(f"{sel} Approved!")
+            with c2:
+                if st.button("❌ Reject Loan"):
+                    st.error(f"{sel} Rejected!")
+
+    else:
+        st.title("SHG Loan Eligibility Checker")
+        st.subheader("Amount Check with Sample Data")
+
+        if df is not None:
+            st.write("Columns in your data:", list(df.columns))
+            member_id = st.text_input("Enter Member ID")
+            loan_amount = st.number_input("Required Loan Amount", min_value=1000, step=1000, value=10000)
+
+            if st.button("Check Eligibility with Sample Data"):
+                # Search member
+                mask = df.astype(str).apply(lambda x: x.str.contains(member_id, na=False)).any(axis=1)
+                found = df[mask]
+                if not found.empty:
+                    row = found.iloc[0]
+                    st.write("Member Found:", row.to_dict())
+
+                    # Auto find savings column
+                    savings_col = None
+                    for c in df.columns:
+                        if any(k in c.lower() for k in ['saving','thrift','balance','sav']):
+                            savings_col = c
+                            break
+
+                    if savings_col:
+                        try:
+                            savings_val = float(str(row[savings_col]).replace(',',''))
+                            max_elig = savings_val * 4
+                            st.info(f"Your Savings ({savings_col}): Rs.{savings_val} | Max Eligible: Rs.{max_elig} | Asking: Rs.{loan_amount}")
+
+                            if loan_amount <= max_elig:
+                                st.success(f"✅ ELIGIBLE for Rs.{loan_amount}")
+                                st.balloons()
+                                st.write(f"Reason: Amount {loan_amount} <= 4x Savings ({max_elig})")
+                            else:
+                                st.error(f"❌ NOT ELIGIBLE for Rs.{loan_amount}")
+                                st.write(f"Reason: Asking {loan_amount} is more than max {max_elig}. Reduce amount or increase savings.")
+                        except:
+                            st.error("Savings value not number, check CSV")
+                    else:
+                        st.warning("No Savings column found. Tell me your column names")
+                else:
+                    st.error(f"Member ID {member_id} not found in CSV")
+        else:
+            st.warning("sample_data.csv not found in GitHub")
+else:
+    st.title("SHG Loan Eligibility - Ellapuram")
+    st.info("👈 Login from sidebar to check amount-based eligibility")
+    st.code("Bank Officer: officer / officer123\nLeader: leader / leader123\nMember: member / member123")
