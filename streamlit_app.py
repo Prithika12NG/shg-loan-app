@@ -3,14 +3,33 @@ import pandas as pd
 import os, glob
 from datetime import datetime
 
-st.set_page_config(page_title="SHG Loan - Ellapuram", page_icon="🏦", layout="centered")
+st.set_page_config(page_title="SHG Loan - Ellapuram Block", page_icon="🏦", layout="wide")
+
+# --- 53 PANCHAYATS OF ELLAPURAM ---
+PANCHAYAT_LIST = [
+    "43 Panapakkam", "82 Panapakkam", "Akkarambakkam", "Alapakkam", "Amirthanallur",
+    "Athangikavanoor", "Athivakkam", "Athupakkam", "Ayalancheri", "Azhinjivakkam",
+    "Enambakkam", "Guruvoyal", "Kakkavakkam", "Kalpattu", "Kannigaipair",
+    "Kannigapuram", "Kilambakkam", "Koduveli", "Kommakambedu", "Kumarapettai",
+    "Latchivakkam", "Maduravasal", "Magaral", "Malandur", "Mambalam",
+    "Manjankarani", "Neiveli", "Pagalmedu", "Palavakkam", "Panayanjeri",
+    "Perandur", "Periyapalayam", "Perumudivakkam", "Poochiathipattu", "Poorivakkam",
+    "Punnapakkam", "Sembedu", "Sengarai", "Senjiagaram", "Sennankarani",
+    "Sethupakkam", "Soolaimeni", "Thamaraikuppam", "Thamaraipakkam", "Thandalam",
+    "Tharaadchi", "Thirukandalam", "Thirunilai", "Tholavedu", "Thumbakkam",
+    "Vadamadurai", "Vannankuppam", "Vengal"
+]
+# Username = panchayat name lower no space, e.g., vengal, periyapalayam, 43panapakkam
+def make_username(name):
+    return "".join(c.lower() for c in name if c.isalnum())
+PANCHAYAT_USERS = {make_username(p): p for p in PANCHAYAT_LIST}
 
 @st.cache_data
 def load_data():
-    script_folder = os.path.dirname(os.path.abspath(__file__))
-    files = glob.glob(os.path.join(script_folder, "*.csv"))
+    folder = os.path.dirname(os.path.abspath(__file__))
+    files = glob.glob(os.path.join(folder, "*.csv"))
     if not files:
-        files = glob.glob(os.path.join(script_folder, "*.xlsx"))
+        files = glob.glob(os.path.join(folder, "*.xlsx"))
     if files:
         try:
             df = pd.read_csv(files[0]) if files[0].endswith('.csv') else pd.read_excel(files[0])
@@ -19,193 +38,172 @@ def load_data():
         except: return None
     return None
 
-st.sidebar.title("🔐 Login")
-role = st.sidebar.selectbox("Select Role", ["SHG Member", "SHG Leader", "Bank Officer"])
-username = st.sidebar.text_input("Username")
-password = st.sidebar.text_input("Password", type="password")
-
-if st.sidebar.button("Login"):
-    if (role=="Bank Officer" and username=="officer" and password=="officer123") or \
-       (role=="SHG Leader" and username=="leader" and password=="leader123") or \
-       (role=="SHG Member" and username=="member" and password=="member123"):
-        st.session_state['logged_in']=True
-        st.session_state['role']=role
-    else:
-        st.session_state['logged_in']=False
-        st.sidebar.error("Wrong Login")
-
-df = load_data()
-
 def find_col(df, col_type):
-    cols_lower = {c.lower().strip(): c for c in df.columns}
-    if col_type == "status":
-        if 'status' in cols_lower: return cols_lower['status']
+    if df is None: return None
+    for c in df.columns:
+        lc = c.lower()
+        if col_type=="status" and lc.strip()=="status": return c
+        if col_type=="ekyc" and "ekyc" in lc: return c
+        if col_type=="mobile" and ("mobile" in lc or "phone" in lc): return c
+        if col_type=="bank" and "bank" in lc and "loan" not in lc: return c
+        if col_type=="livelihood" and "livelihood" in lc: return c
+        if col_type=="approval" and "approval" in lc: return c
+    if col_type=="status":
         for c in df.columns:
             if 'marital' in c.lower(): continue
             try:
-                vals = [str(v).lower().strip() for v in df[c].tolist()[:50]]
+                vals=[str(v).lower().strip() for v in df[c].tolist()[:50]]
                 if 'active' in vals or 'inactive' in vals: return c
             except: pass
-    if col_type == "ekyc":
-        for c in df.columns:
-            if 'ekyc' in c.lower() or 'kyc' in c.lower(): return c
-    if col_type == "mobile":
-        for c in df.columns:
-            if 'mobile' in c.lower() or 'phone' in c.lower(): return c
-    if col_type == "bank":
-        for c in df.columns:
-            if 'bank' in c.lower() and 'loan' not in c.lower(): return c
-    if col_type == "livelihood":
-        for c in df.columns:
-            if 'livelihood' in c.lower(): return c
-    if col_type == "approval":
-        for c in df.columns:
-            if 'approval' in c.lower(): return c
     return None
 
-if 'pending_leader' not in st.session_state: st.session_state['pending_leader'] = []
-if 'pending_officer' not in st.session_state: st.session_state['pending_officer'] = []
-if 'selected_leader_id' not in st.session_state: st.session_state['selected_leader_id'] = None
-if 'app_status' not in st.session_state: st.session_state['app_status'] = {} # MemberID -> Status tracking
+# Session init
+if 'logged_in' not in st.session_state: st.session_state['logged_in']=False
+if 'pending_bmmu' not in st.session_state: st.session_state['pending_bmmu']=[]
+if 'pending_officer' not in st.session_state: st.session_state['pending_officer']=[]
+if 'app_status' not in st.session_state: st.session_state['app_status']={}
+if 'page' not in st.session_state: st.session_state['page']='dashboard'
+if 'selected_bmmu_id' not in st.session_state: st.session_state['selected_bmmu_id']=None
 
-def update_status(member_id, status, reason="", level=""):
-    st.session_state['app_status'][member_id] = {
-        'status': status,
-        'reason': reason,
-        'level': level,
-        'time': datetime.now().strftime("%d-%m-%Y %H:%M")
+def update_status(mid, status, reason, level, panchayat=""):
+    st.session_state['app_status'][mid] = {
+        'status': status, 'reason': reason, 'level': level,
+        'panchayat': panchayat, 'time': datetime.now().strftime("%d-%m-%Y %H:%M")
     }
 
-if 'logged_in' in st.session_state and st.session_state['logged_in']:
+df = load_data()
 
-    # --- 3. BANK OFFICER ---
-    if st.session_state['role'] == "Bank Officer":
-        st.title("🏦 Bank Officer Dashboard")
-        if len(st.session_state['pending_officer'])==0:
-            st.info("No applications from Leader.")
-        else:
-            df_list = pd.DataFrame(st.session_state['pending_officer'])
-            st.dataframe(df_list, use_container_width=True)
-            member_ids = [x['id'] for x in st.session_state['pending_officer']]
-            sel = st.selectbox("Select Member ID", member_ids)
-            app = next((x for x in st.session_state['pending_officer'] if x['id']==sel), None)
-            if app:
-                c1,c2 = st.columns(2)
-                with c1:
-                    if st.button(f"✅ Disburse {sel}"):
-                        update_status(sel, "✅ APPROVED & DISBURSED", "Loan disbursed successfully", "Bank Officer")
-                        st.balloons()
-                        st.success(f"{sel} Disbursed!")
-                        st.session_state['pending_officer'] = [x for x in st.session_state['pending_officer'] if x['id']!=sel]
-                        st.rerun()
-                with c2:
-                    st.write("Reject with Reason:")
-                    rej_reason = st.text_input("Reason for rejection", key=f"off_rej_{sel}", placeholder="e.g. Documents incomplete, CIBIL low")
-                    if st.button(f"❌ Reject {sel}"):
-                        if not rej_reason: rej_reason = "Rejected by Bank Officer - No reason given"
-                        update_status(sel, "❌ REJECTED BY BANK OFFICER", rej_reason, "Bank Officer")
-                        st.session_state['pending_officer'] = [x for x in st.session_state['pending_officer'] if x['id']!=sel]
-                        st.error(f"{sel} Rejected")
-                        st.rerun()
+# --- LOGIN / LOGOUT SIDEBAR ---
+with st.sidebar:
+    if not st.session_state['logged_in']:
+        st.title("🔐 Login")
+        role = st.selectbox("Select Role", ["Panchayat", "BMMU", "Bank Officer"])
+        username = st.text_input("Username", placeholder="e.g. vengal or bmmu or officer")
+        password = st.text_input("Password", type="password")
+        if st.button("Login", type="primary"):
+            ok=False
+            panchayat_name=""
+            if role=="Panchayat":
+                if username.lower() in PANCHAYAT_USERS and password=="test123":
+                    ok=True; panchayat_name=PANCHAYAT_USERS[username.lower()]
+            elif role=="BMMU":
+                if username.lower()=="bmmu" and password=="bmmu123": ok=True
+            elif role=="Bank Officer":
+                if username.lower()=="officer" and password=="officer123": ok=True
 
-    # --- 2. SHG LEADER WITH REASON ---
-    elif st.session_state['role'] == "SHG Leader":
-        st.title("👩‍💼 SHG Leader Dashboard")
-        st.subheader(f"Pending: {len(st.session_state['pending_leader'])} Applications")
-
-        if len(st.session_state['pending_leader'])==0:
-            st.info("No pending applications.")
-        else:
-            list_data = [{"S.No": i+1, "Member ID": app['id'], "Loan": f"Rs.{app['amount']}"} for i, app in enumerate(st.session_state['pending_leader'])]
-            st.table(pd.DataFrame(list_data))
-
-            member_ids = [app['id'] for app in st.session_state['pending_leader']]
-            selected = st.selectbox("Select Member ID", member_ids)
-            if st.button("🔍 View & Check Eligibility", type="primary"):
-                st.session_state['selected_leader_id'] = selected
-
-            if st.session_state['selected_leader_id']:
-                sel_id = st.session_state['selected_leader_id']
-                app = next((x for x in st.session_state['pending_leader'] if x['id']==sel_id), None)
-                if app:
-                    st.divider()
-                    st.write(f"## Member: {sel_id}")
-                    if df is not None:
-                        mask = df.astype(str).apply(lambda x: x.str.contains(sel_id, na=False)).any(axis=1)
-                        found = df[mask]
-                        if not found.empty:
-                            row = found.iloc[0]
-                            liv_col = find_col(df, "livelihood")
-                            appr_col = find_col(df, "approval")
-                            liv_val = str(row[liv_col]).strip() if liv_col else "NA"
-                            appr_val = str(row[appr_col]).strip() if appr_col else "NA"
-
-                            is_liv_ok = liv_val.lower() not in ['','--','nan','none','0','na']
-                            is_bm_ok = 'approved' in appr_val.lower()
-
-                            if is_liv_ok: st.success(f"✅ Primary Livelihoods: {liv_val}")
-                            else: st.error(f"❌ Primary Livelihoods: {liv_val} - FAILED")
-
-                            if is_bm_ok: st.success(f"✅ Approval Status: {appr_val}")
-                            else: st.error(f"❌ Approval Status: {appr_val} - NOT Approved by BM")
-
-                            st.markdown("---")
-                            if is_liv_ok and is_bm_ok:
-                                if st.button(f"📤 Forward {sel_id} to Bank Officer", type="primary"):
-                                    new_o = {'id': sel_id, 'amount': app['amount'], 'livelihood': liv_val, 'bm_status': appr_val}
-                                    if not any(x['id']==sel_id for x in st.session_state['pending_officer']):
-                                        st.session_state['pending_officer'].append(new_o)
-                                    update_status(sel_id, "⏳ PENDING WITH BANK OFFICER", "Approved by SHG Leader, forwarded to Bank", "SHG Leader")
-                                    st.session_state['pending_leader'] = [x for x in st.session_state['pending_leader'] if x['id']!=sel_id]
-                                    st.session_state['selected_leader_id'] = None
-                                    st.rerun()
-                            else:
-                                st.error("Cannot forward - As per your screenshot")
-                                # REJECTION WITH REASON
-                                reason = st.text_area("Enter Rejection Reason (Member will see this)",
-                                    value=f"Primary Livelihoods: {liv_val} | Approval Status: {appr_val} - Not Approved by BM. Please contact BM.",
-                                    key=f"reason_{sel_id}")
-                                if st.button(f"❌ Reject & Send Back {sel_id}"):
-                                    update_status(sel_id, "❌ REJECTED BY SHG LEADER", reason, "SHG Leader")
-                                    st.session_state['pending_leader'] = [x for x in st.session_state['pending_leader'] if x['id']!=sel_id]
-                                    st.session_state['selected_leader_id'] = None
-                                    st.rerun()
-
-    # --- 1. MEMBER WITH STATUS TRACKER ---
-    else:
-        st.title("SHG Loan Eligibility Checker")
-
-        # NEW: STATUS TRACKER ON TOP
-        st.subheader("📊 Track Your Application Status")
-        track_id = st.text_input("Enter Member ID to Track Status", value="290047031286", key="track")
-        if st.button("🔎 Track Status"):
-            if track_id in st.session_state['app_status']:
-                info = st.session_state['app_status'][track_id]
-                st.write(f"**Member ID: {track_id}**")
-                if "REJECTED" in info['status']:
-                    st.error(f"{info['status']}")
-                elif "APPROVED" in info['status']:
-                    st.success(f"{info['status']}")
-                else:
-                    st.warning(f"{info['status']}")
-
-                st.write(f"**Level:** {info['level']}")
-                st.write(f"**Reason / Remarks:** {info['reason']}")
-                st.write(f"**Last Updated:** {info['time']}")
+            if ok:
+                st.session_state['logged_in']=True
+                st.session_state['role']=role
+                st.session_state['username']=username
+                st.session_state['panchayat_name']=panchayat_name if role=="Panchayat" else ""
+                st.session_state['page']='dashboard'
+                st.rerun()
             else:
-                st.info("No application history found for this ID. Check eligibility below to apply.")
+                if role=="Panchayat": st.error("Use panchayat name as username, e.g. vengal / test123")
+                else: st.error("Invalid login")
 
         st.divider()
-        st.subheader("Apply for New Loan")
+        st.caption("Panchayat logins: 53 panchayats")
+        st.caption("Username: panchayat name (e.g. vengal, periyapalayam, 43panapakkam) | Pass: test123")
+        st.caption("BMMU: bmmu / bmmu123 | Officer: officer / officer123")
 
-        member_id = st.text_input("Enter Member ID", value="290047031286", key="apply")
-        loan_amount = st.number_input("Loan Amount", min_value=1000, step=5000, value=10000)
+    else:
+        st.success(f"Logged in as: {st.session_state['role']}")
+        if st.session_state['role']=="Panchayat":
+            st.info(f"📍 {st.session_state['panchayat_name']}")
+        st.write(f"User: {st.session_state['username']}")
+        if st.button("🚪 Logout"):
+            st.session_state['logged_in']=False
+            st.session_state['page']='dashboard'
+            st.rerun()
 
-        # Show existing status for this ID before applying
-        if member_id in st.session_state['app_status']:
-            info = st.session_state['app_status'][member_id]
-            if "REJECTED" in info['status']:
-                st.warning(f"Previous Status: {info['status']} - Reason: {info['reason']}")
+# --- MAIN AREA ---
+if not st.session_state['logged_in']:
+    st.title("SHG Loan Eligibility - Ellapuram Block")
+    st.info("👈 Please login from sidebar. 53 Panchayat logins available.")
+    st.write("Flow: **Panchayat -> BMMU (Block Mission Management Unit) -> Bank Officer**")
+else:
+    role = st.session_state['role']
+    panchayat_name = st.session_state.get('panchayat_name', '')
+
+    # DASHBOARD COUNTS
+    def get_counts(filter_panchayat=None):
+        statuses = st.session_state['app_status']
+        if filter_panchayat:
+            statuses = {k:v for k,v in statuses.items() if v.get('panchayat')==filter_panchayat}
+        total = len(statuses)
+        pending_bmmu = len([k for k in st.session_state['pending_bmmu'] if (not filter_panchayat or st.session_state['app_status'].get(k,{}).get('panchayat')==filter_panchayat) ]) if not filter_panchayat else len([x for x in st.session_state['pending_bmmu'] if x['panchayat']==filter_panchayat])
+        # For panchayat filter we need to filter pending lists directly
+        if filter_panchayat:
+            pending_bmmu = len([x for x in st.session_state['pending_bmmu'] if x.get('panchayat')==filter_panchayat])
+            pending_bank = len([x for x in st.session_state['pending_officer'] if x.get('panchayat')==filter_panchayat])
+        else:
+            pending_bank = len(st.session_state['pending_officer'])
+            pending_bmmu = len(st.session_state['pending_bmmu'])
+
+        rejected = len([v for v in statuses.values() if "REJECTED" in v['status']])
+        accepted = len([v for v in statuses.values() if "APPROVED" in v['status'] or "DISBURSED" in v['status']])
+        pending_leader_count = pending_bmmu
+        return total, pending_bmmu, pending_bank, rejected, accepted
+
+    # --- DASHBOARD PAGE ---
+    if st.session_state['page']=='dashboard':
+        filter_p = panchayat_name if role=="Panchayat" else None
+        total, p_bmmu, p_bank, rej, acc = get_counts(filter_p)
+
+        st.title(f"📊 Dashboard - {role} {f'- {panchayat_name}' if filter_p else ''}")
+
+        c1,c2,c3,c4,c5 = st.columns(5)
+        c1.metric("Total Applications", total)
+        c2.metric("Pending at BMMU", p_bmmu)
+        c3.metric("Pending at Bank", p_bank)
+        c4.metric("Rejected", rej)
+        c5.metric("Accepted / Disbursed", acc)
+
+        st.divider()
+
+        if role=="Panchayat":
+            st.write("### Panchayat Actions")
+            colA,colB = st.columns(2)
+            with colA:
+                if st.button("➕ New Loan Application", type="primary", use_container_width=True):
+                    st.session_state['page']='new_application'
+                    st.rerun()
+            with colB:
+                if st.button("🔎 Track Application Status", use_container_width=True):
+                    st.session_state['page']='track'
+                    st.rerun()
+
+            # Show my applications table
+            if total>0:
+                st.write("#### My Submissions")
+                my_apps = {k:v for k,v in st.session_state['app_status'].items() if v.get('panchayat')==panchayat_name}
+                st.dataframe(pd.DataFrame.from_dict(my_apps, orient='index'), use_container_width=True)
+
+        elif role=="BMMU":
+            st.write("### BMMU - Block Mission Management Unit")
+            st.write(f"Pending at BMMU: {p_bmmu} | Forwarded to Bank: {p_bank}")
+
+            if st.button("📋 View Pending Applications List", type="primary"):
+                st.session_state['page']='bmmu_list'
+                st.rerun()
+
+        elif role=="Bank Officer":
+            st.write("### Bank Officer - Final Approval")
+            st.write(f"Applications forwarded by BMMU: {p_bank}")
+            if st.button("🏦 View Bank Pending List", type="primary"):
+                st.session_state['page']='officer_list'
+                st.rerun()
+
+    # --- NEW APPLICATION PAGE (Panchayat) ---
+    elif st.session_state['page']=='new_application':
+        st.title("➕ New Loan Application")
+        if st.button("⬅️ Back to Dashboard"):
+            st.session_state['page']='dashboard'; st.rerun()
+
+        st.subheader(f"Panchayat: {panchayat_name} - Search Member Eligibility")
+        member_id = st.text_input("Enter Member ID", value="290047031286")
+        loan_amount = st.number_input("Loan Amount Rs.", min_value=1000, step=5000, value=10000)
 
         if st.button("Check Eligibility"):
             if df is not None and member_id:
@@ -213,42 +211,147 @@ if 'logged_in' in st.session_state and st.session_state['logged_in']:
                 found = df[mask]
                 if not found.empty:
                     row = found.iloc[0]
-                    active_col = find_col(df, "status")
-                    ekyc_col = find_col(df, "ekyc")
-                    mobile_col = find_col(df, "mobile")
-                    bank_col = find_col(df, "bank")
-                    all_ok = True
-                    for col_type, name in [(active_col,"Member Active"), (ekyc_col,"eKYC"), (mobile_col,"Mobile"), (bank_col,"Bank Account")]:
-                        if col_type:
-                            val=str(row[col_type]).strip()
-                            if name=="Member Active":
-                                is_ok=val.lower().strip()=='active'
-                            elif name=="eKYC":
-                                is_ok='verif' in val.lower() or val.lower() in ['yes','verified','1']
-                            else:
-                                is_ok=val not in ['','--','nan'] and len(val)>=3
-                            if is_ok: st.success(f"✅ {name}: {val}")
-                            else: st.error(f"❌ {name}: {val} - FAILED"); all_ok=False
+                    ac = find_col(df,"status"); ek = find_col(df,"ekyc"); mo = find_col(df,"mobile"); ba = find_col(df,"bank")
+                    all_ok=True
+                    checks=[]
+                    if ac:
+                        v=str(row[ac]).strip(); is_ok=v.lower().strip()=='active'; checks.append(("Member Active",is_ok,v)); all_ok=all_ok and is_ok
+                    if ek:
+                        v=str(row[ek]).strip(); is_ok='verif' in v.lower() or v.lower() in ['yes','verified','1']; checks.append(("eKYC",is_ok,v)); all_ok=all_ok and is_ok
+                    if mo:
+                        v=str(row[mo]).strip(); is_ok=v not in ['','--','nan'] and len(v)>=5; checks.append(("Mobile",is_ok,v)); all_ok=all_ok and is_ok
+                    if ba:
+                        v=str(row[ba]).strip(); is_ok=v not in ['','--','nan'] and len(v)>3; checks.append(("Bank Account",is_ok,v)); all_ok=all_ok and is_ok
+
+                    for n,s,v in checks:
+                        if s: st.success(f"✅ {n}: {v}")
+                        else: st.error(f"❌ {n}: {v} - FAILED")
+
                     if all_ok:
-                        st.success("✅ ELIGIBLE")
+                        st.success("✅ ELIGIBLE - Ready to submit to BMMU")
                         st.session_state['eligible_member']=member_id
                         st.session_state['eligible_amount']=loan_amount
                         st.session_state['show_submit']=True
                     else:
                         st.error("❌ NOT ELIGIBLE")
-                        update_status(member_id, "❌ AUTO-REJECTED - Eligibility Failed", "Failed Active/eKYC/Mobile/Bank check", "System")
+                        update_status(member_id,"❌ AUTO-REJECTED","Failed eligibility check", "Panchayat", panchayat_name)
                         st.session_state['show_submit']=False
+                else:
+                    st.error("Member ID not found in data")
+            else:
+                st.error("No data file found")
 
         if st.session_state.get('show_submit', False):
-            if st.button("📤 Submit to SHG Leader"):
-                new_app={'id':st.session_state['eligible_member'],'amount':st.session_state['eligible_amount']}
-                if not any(x['id']==new_app['id'] for x in st.session_state['pending_leader']):
-                    st.session_state['pending_leader'].append(new_app)
-                update_status(new_app['id'], "⏳ PENDING WITH SHG LEADER", "Eligible and submitted to Leader for livelihood & BM approval verification", "SHG Member")
-                st.success("Submitted to Leader! Now track status above.")
+            if st.button("📤 Submit to BMMU", type="primary"):
+                new_app={'id':st.session_state['eligible_member'],'amount':st.session_state['eligible_amount'],'panchayat':panchayat_name}
+                if not any(x['id']==new_app['id'] for x in st.session_state['pending_bmmu']):
+                    st.session_state['pending_bmmu'].append(new_app)
+                update_status(new_app['id'],"⏳ PENDING AT BMMU","Eligible, submitted by Panchayat, pending livelihood & BM approval check at BMMU","Panchayat",panchayat_name)
+                st.success(f"Submitted to BMMU! Status: PENDING AT BMMU")
                 st.session_state['show_submit']=False
+                st.session_state['page']='dashboard'
+                st.rerun()
 
-else:
-    st.title("SHG Loan - Ellapuram")
-    st.info("👈 Login")
-    st.code("member/member123\nleader/leader123\nofficer/officer123")
+    # --- TRACK PAGE ---
+    elif st.session_state['page']=='track':
+        st.title("🔎 Track Application Status")
+        if st.button("⬅️ Back to Dashboard"):
+            st.session_state['page']='dashboard'; st.rerun()
+        track_id = st.text_input("Enter Member ID")
+        if st.button("Track"):
+            if track_id in st.session_state['app_status']:
+                info=st.session_state['app_status'][track_id]
+                if "REJECTED" in info['status']: st.error(info['status'])
+                elif "APPROVED" in info['status'] or "DISBURSED" in info['status']: st.success(info['status'])
+                else: st.warning(info['status'])
+                st.write(f"**Panchayat:** {info.get('panchayat','')}")
+                st.write(f"**Level:** {info['level']}")
+                st.write(f"**Reason:** {info['reason']}")
+                st.write(f"**Time:** {info['time']}")
+            else:
+                st.info("No history found")
+
+    # --- BMMU LIST VIEW ---
+    elif st.session_state['page']=='bmmu_list':
+        st.title("👩‍💼 BMMU Dashboard - Verify Primary Livelihood & BM Approval")
+        if st.button("⬅️ Back to Dashboard"):
+            st.session_state['page']='dashboard'; st.session_state['selected_bmmu_id']=None; st.rerun()
+
+        if len(st.session_state['pending_bmmu'])==0:
+            st.info("No pending applications from Panchayats.")
+        else:
+            st.write(f"**{len(st.session_state['pending_bmmu'])} Applications from Panchayats**")
+            list_data=[{"S.No":i+1,"Member ID":x['id'],"Amount":x['amount'],"Panchayat":x.get('panchayat','')} for i,x in enumerate(st.session_state['pending_bmmu'])]
+            st.table(pd.DataFrame(list_data))
+
+            sel = st.selectbox("Select Member ID", [x['id'] for x in st.session_state['pending_bmmu']])
+            if st.button("🔍 View & Check Eligibility", type="primary"):
+                st.session_state['selected_bmmu_id']=sel
+
+            if st.session_state['selected_bmmu_id']:
+                sel_id=st.session_state['selected_bmmu_id']
+                app = next((x for x in st.session_state['pending_bmmu'] if x['id']==sel_id), None)
+                if app and df is not None:
+                    st.divider()
+                    st.write(f"## Checking: {sel_id} | Panchayat: {app.get('panchayat')}")
+                    mask = df.astype(str).apply(lambda x: x.str.contains(sel_id, na=False)).any(axis=1)
+                    found=df[mask]
+                    if not found.empty:
+                        row=found.iloc[0]
+                        liv_col=find_col(df,"livelihood"); appr_col=find_col(df,"approval")
+                        liv_val=str(row[liv_col]).strip() if liv_col else "NA"
+                        appr_val=str(row[appr_col]).strip() if appr_col else "NA"
+                        is_liv=liv_val.lower() not in ['','--','nan','none','0','na']
+                        is_bm='approved' in appr_val.lower()
+
+                        if is_liv: st.success(f"✅ Primary Livelihoods: {liv_val}")
+                        else: st.error(f"❌ Primary Livelihoods: {liv_val}")
+
+                        if is_bm: st.success(f"✅ Approval Status: {appr_val} (Approved by BM)")
+                        else: st.error(f"❌ Approval Status: {appr_val} - NOT Approved by BM")
+
+                        st.markdown("---")
+                        if is_liv and is_bm:
+                            if st.button(f"📤 Forward {sel_id} to Bank Officer", type="primary"):
+                                new_o={'id':sel_id,'amount':app['amount'],'panchayat':app.get('panchayat',''),'livelihood':liv_val,'bm_status':appr_val}
+                                if not any(x['id']==sel_id for x in st.session_state['pending_officer']):
+                                    st.session_state['pending_officer'].append(new_o)
+                                update_status(sel_id,"⏳ PENDING WITH BANK OFFICER","Approved by BMMU, forwarded to Bank", "BMMU", app.get('panchayat',''))
+                                st.session_state['pending_bmmu']=[x for x in st.session_state['pending_bmmu'] if x['id']!=sel_id]
+                                st.session_state['selected_bmmu_id']=None
+                                st.rerun()
+                        else:
+                            reason = st.text_area("Rejection Reason (Member & Panchayat will see)", value=f"Primary Livelihoods: {liv_val} | Approval Status: {appr_val} - Pending with Bookkeeper / Not Approved by BM", key=f"rej_{sel_id}")
+                            if st.button(f"❌ Reject & Send Back {sel_id}"):
+                                update_status(sel_id,"❌ REJECTED BY BMMU",reason,"BMMU",app.get('panchayat',''))
+                                st.session_state['pending_bmmu']=[x for x in st.session_state['pending_bmmu'] if x['id']!=sel_id]
+                                st.session_state['selected_bmmu_id']=None
+                                st.rerun()
+
+    # --- BANK OFFICER LIST ---
+    elif st.session_state['page']=='officer_list':
+        st.title("🏦 Bank Officer - Final Approval")
+        if st.button("⬅️ Back to Dashboard"):
+            st.session_state['page']='dashboard'; st.rerun()
+
+        if len(st.session_state['pending_officer'])==0:
+            st.info("No applications forwarded by BMMU yet.")
+        else:
+            st.dataframe(pd.DataFrame(st.session_state['pending_officer']), use_container_width=True)
+            sel = st.selectbox("Select Member ID", [x['id'] for x in st.session_state['pending_officer']])
+            app = next((x for x in st.session_state['pending_officer'] if x['id']==sel), None)
+            if app:
+                c1,c2=st.columns(2)
+                with c1:
+                    if st.button(f"✅ Disburse {sel}", type="primary"):
+                        update_status(sel,"✅ APPROVED & DISBURSED","Loan disbursed", "Bank Officer", app.get('panchayat',''))
+                        st.balloons()
+                        st.session_state['pending_officer']=[x for x in st.session_state['pending_officer'] if x['id']!=sel]
+                        st.rerun()
+                with c2:
+                    rej_reason = st.text_input("Rejection Reason", key=f"off_{sel}")
+                    if st.button(f"❌ Reject {sel}"):
+                        if not rej_reason: rej_reason="Rejected by Bank - Documents/CIBIL issue"
+                        update_status(sel,"❌ REJECTED BY BANK OFFICER",rej_reason,"Bank Officer", app.get('panchayat',''))
+                        st.session_state['pending_officer']=[x for x in st.session_state['pending_officer'] if x['id']!=sel]
+                        st.rerun()
