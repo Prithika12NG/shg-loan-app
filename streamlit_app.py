@@ -1,106 +1,72 @@
 import streamlit as st
 import pandas as pd
-import os, glob
 
-st.set_page_config(page_title="SHG Loan Eligibility - Ellapuram", page_icon="🏦", layout="centered")
-st.title("🏦 SHG Loan Eligibility Checker")
-st.subheader("Ellapuram Block - 17562 Members | Mobile Version")
-st.markdown("---")
+st.set_page_config(page_title="SHG Loan App", layout="wide")
 
-@st.cache_data
-def load_data():
-    script_folder = os.path.dirname(os.path.abspath(__file__))
-    files = glob.glob(os.path.join(script_folder, "*.csv"))
-    if not files:
-        files = glob.glob(os.path.join(script_folder, "*.xlsx"))
-    if not files:
-        return None, None
-    fp = files[0]
-    df = pd.read_csv(fp, low_memory=False) if fp.endswith('.csv') else pd.read_excel(fp)
-    df.columns = df.columns.str.strip()
-    return df, fp
+# --- DAY 2: LOGIN SYSTEM ---
+st.sidebar.title("🔐 Login")
 
-def find_column(df, keyword):
-    for col in df.columns:
-        if keyword.lower() in col.lower():
-            return col
-    return None
+role = st.sidebar.selectbox("Select Role", ["SHG Member", "SHG Leader", "Bank Officer"])
 
-df, filename = load_data()
+username = st.sidebar.text_input("Username")
+password = st.sidebar.text_input("Password", type="password")
+login_btn = st.sidebar.button("Login")
 
-if df is None:
-    st.error("CSV not found")
+# Simple login logic (for college project - no database needed)
+def check_login(role, username, password):
+    if role == "Bank Officer" and username == "officer" and password == "officer123":
+        return True
+    if role == "SHG Leader" and username == "leader" and password == "leader123":
+        return True
+    if role == "SHG Member" and username == "member" and password == "member123":
+        return True
+    return False
+
+if login_btn:
+    if check_login(role, username, password):
+        st.session_state['logged_in'] = True
+        st.session_state['role'] = role
+        st.success(f"Welcome {role} : {username}")
+    else:
+        st.error("Wrong Username/Password")
+        st.session_state['logged_in'] = False
+
+# --- MAIN APP AFTER LOGIN ---
+if 'logged_in' in st.session_state and st.session_state['logged_in']:
+
+    if st.session_state['role'] == "Bank Officer":
+        st.title("🏦 Bank Officer Dashboard")
+        st.write("All Loan Applications")
+        # Show all data
+        df = pd.read_csv("sample_data.csv")
+        st.dataframe(df)
+        
+        # Approve/Reject Button
+        selected_id = st.selectbox("Select Loan ID to Action", df['member_id'] if 'member_id' in df.columns else df.iloc[:,0])
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("✅ Approve Loan"):
+                st.success(f"Loan {selected_id} Approved!")
+        with col2:
+            if st.button("❌ Reject Loan"):
+                st.error(f"Loan {selected_id} Rejected!")
+
+    elif st.session_state['role'] == "SHG Member":
+        st.title("👩 SHG Member - Eligibility Check")
+        # Your old eligibility code comes here
+        loan_amt = st.number_input("Loan Amount", min_value=1000)
+        if st.button("Check Eligibility"):
+            st.success("Eligible! Contact your Leader")
+
+    elif st.session_state['role'] == "SHG Leader":
+        st.title("👩‍💼 SHG Leader - Apply Loan")
+        shg_name = st.text_input("SHG Name")
+        members = st.number_input("No of Members", min_value=1)
+        if st.button("Apply for Loan"):
+            st.success(f"Application Sent for {shg_name}")
+
 else:
-    st.success(f"Loaded: {os.path.basename(filename)} | Total Members: {len(df)}")
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total Members", len(df))
-    col2.metric("Panchayats", df[find_column(df, "Panchayat")].nunique() if find_column(df, "Panchayat") else "N/A")
-    col3.metric("File", os.path.basename(filename)[:15])
-
-    st.markdown("---")
-
-    # FIXED: Use form - 1 click works always
-    with st.form("check_form", clear_on_submit=False):
-        member_code = st.text_input("Enter Member Code", placeholder="e.g., 290031673718")
-        submitted = st.form_submit_button("CHECK ELIGIBILITY", use_container_width=True)
-
-    if submitted:
-        if not member_code:
-            st.warning("Enter Member Code")
-        else:
-            mask = False
-            for col in df.columns:
-                try:
-                    mask |= df[col].astype(str).str.contains(str(member_code), na=False, case=False)
-                except: pass
-            matched = df[mask]
-
-            if matched.empty:
-                st.error(f"Member Code {member_code} Not Found")
-            else:
-                row = matched.iloc[0]
-                col_aadhaar = find_column(df, "Aadhaar KYC")
-                col_acc = find_column(df, "Account Number")
-
-                aadhaar_val = str(row.get(col_aadhaar, '')).strip().upper() if col_aadhaar else ''
-                acc_val = str(row.get(col_acc, '')).strip() if col_acc else ''
-
-                eligible = True
-                reasons = []
-
-                if 'VERIFIED' in aadhaar_val or 'YES' in aadhaar_val:
-                    reasons.append(f"✅ Aadhaar KYC : Verified")
-                else:
-                    eligible = False
-                    reasons.append(f"❌ Aadhaar KYC Not Verified : Not Verified")
-
-                if acc_val and acc_val.upper() not in ['NAN', 'NONE', '-', '0'] and len(acc_val) >= 4:
-                    reasons.append(f"✅ Bank Account: Linked (Secure)")
-                else:
-                    eligible = False
-                    reasons.append("❌ Bank Account Not Linked")
-
-                st.markdown("---")
-                if eligible:
-                    st.success("✅ ELIGIBLE FOR LOAN")
-                    st.balloons()
-                else:
-                    st.error("❌ NOT ELIGIBLE")
-
-                for r in reasons:
-                    st.write(r)
-
-                st.markdown("### Member Details")
-                # SAFE - Show only non-sensitive columns
-                safe_cols = [find_column(df, "Member"), find_column(df, "SHG"), find_column(df, "Panchayat"), find_column(df, "Block")]
-                safe_cols = [c for c in safe_cols if c is not None]
-                safe_data = row[safe_cols].to_frame().T if safe_cols else pd.DataFrame([row])
-                st.dataframe(safe_data)
-
-                # Don't show Aadhaar or Account number full - mask it
-                st.write(f"🔒 Aadhaar KYC Status: {'Verified' if 'VERIFIED' in aadhaar_val or 'YES' in aadhaar_val else 'Not Verified'}")
-                st.write(f"🔒 Bank Account: {'Linked' if len(acc_val)>=4 else 'Not Linked'} (Number hidden for privacy)")
-
-                # Auto-clear for next search - helps mobile
-                st.info("👉 Enter next Member Code above and click CHECK again - will work in 1 click now!")
-st.caption("TNRTP | Ellapuram | 1-Click Fixed")
+    st.title("SHG Loan Eligibility App")
+    st.info("👈 Please Login from left sidebar to continue")
+    st.write("**Demo Logins for Viva:**")
+    st.code("Bank Officer -> username: officer / password: officer123\nSHG Leader -> username: leader / password: leader123\nSHG Member -> username: member / password: member123")
