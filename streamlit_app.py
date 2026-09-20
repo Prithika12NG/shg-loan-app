@@ -42,14 +42,12 @@ def find_col(df, col_type):
         if 'status' in cols_lower:
             return cols_lower['status']
         for c in df.columns:
-            if 'marital' in c.lower():
-                continue
+            if 'marital' in c.lower(): continue
             try:
                 vals = [str(v).lower().strip() for v in df[c].tolist()[:50]]
                 if 'active' in vals or 'inactive' in vals:
                     return c
-            except:
-                pass
+            except: pass
         return None
     if col_type == "ekyc":
         for c in df.columns:
@@ -63,29 +61,45 @@ def find_col(df, col_type):
         for c in df.columns:
             if 'bank' in c.lower() and 'loan' not in c.lower():
                 return c
-            if c.lower().strip() in ['account','bank account','bank_account']:
-                return c
     return None
+
+# Initialize pending list
+if 'pending_apps' not in st.session_state:
+    st.session_state['pending_apps'] = []
 
 if 'logged_in' in st.session_state and st.session_state['logged_in']:
 
     if st.session_state['role'] == "Bank Officer":
         st.title("🏦 Bank Officer Dashboard")
-        st.subheader("Ellapuram Block - Applications")
-        if df is not None:
-            st.dataframe(df.head(30))
-            sel = st.selectbox("Select Member ID", df.iloc[:,0].astype(str))
-            c1,c2 = st.columns(2)
-            with c1:
-                if st.button("✅ Approve"): st.success(f"{sel} Approved!")
-            with c2:
-                if st.button("❌ Reject"): st.error(f"{sel} Rejected")
+        st.subheader("Ellapuram Block - Applications Pending")
+
+        if len(st.session_state['pending_apps']) == 0:
+            st.info("No applications submitted yet. Members need to check eligibility and click Submit.")
+            if df is not None:
+                st.write("Full Data Preview (For reference only - not pending):")
+                st.dataframe(df.head(20))
+        else:
+            st.success(f"{len(st.session_state['pending_apps'])} Application(s) Pending for Approval")
+            for app in st.session_state['pending_apps']:
+                st.write(f"**Member ID: {app['id']} | Amount: Rs.{app['amount']} | Status: {app['status']}**")
+                c1,c2 = st.columns(2)
+                with c1:
+                    if st.button(f"✅ Approve {app['id']}", key=f"ap_{app['id']}"):
+                        st.success(f"{app['id']} Approved & Disbursed!")
+                        st.session_state['pending_apps'] = [x for x in st.session_state['pending_apps'] if x['id']!=app['id']]
+                        st.rerun()
+                with c2:
+                    if st.button(f"❌ Reject {app['id']}", key=f"re_{app['id']}"):
+                        st.error(f"{app['id']} Rejected")
+                        st.session_state['pending_apps'] = [x for x in st.session_state['pending_apps'] if x['id']!=app['id']]
+                        st.rerun()
+                st.divider()
 
     else:
         st.title("SHG Loan Eligibility Checker")
         st.subheader("Ellapuram Block - Mobile Version")
 
-        member_id = st.text_input("Enter Member ID", value="290031673652")
+        member_id = st.text_input("Enter Member ID", value="290047031286")
         loan_amount = st.number_input("Required Loan Amount (Rs.)", min_value=1000, step=5000, value=10000)
 
         if st.button("Check Eligibility"):
@@ -104,43 +118,30 @@ if 'logged_in' in st.session_state and st.session_state['logged_in']:
                     checks = []
                     all_ok = True
 
-                    # 1. ACTIVE CHECK - FIXED: INACTIVE should be RED
                     if active_col:
                         val = str(row[active_col]).strip()
-                        # FIXED LOGIC - Only exact ACTIVE is eligible
                         is_active = val.lower().strip() == 'active'
                         checks.append(("Member Active", is_active, val))
                         if not is_active: all_ok = False
-                    else:
-                        checks.append(("Member Active", False, "Status column not found"))
 
-                    # 2. eKYC
                     if ekyc_col:
                         val = str(row[ekyc_col]).strip()
                         v = val.lower()
                         is_ok = v in ['yes','verified','available','completed','1'] or 'verif' in v
                         checks.append(("eKYC Verified", is_ok, val))
                         if not is_ok: all_ok = False
-                    else:
-                        checks.append(("eKYC Verified", False, "eKYC column not found"))
 
-                    # 3. Mobile
                     if mobile_col:
                         val = str(row[mobile_col]).strip()
                         is_ok = val not in ['','--','nan','none','0','not available'] and len(val) >= 5
                         checks.append(("Mobile Verified", is_ok, val if val!='--' else "Not Available"))
                         if not is_ok: all_ok = False
-                    else:
-                        checks.append(("Mobile Verified", False, "Mobile column not found"))
 
-                    # 4. Bank Account
                     if bank_col:
                         val = str(row[bank_col]).strip()
                         is_ok = val not in ['','--','nan','none','0','not available'] and len(val) > 3
                         checks.append(("Bank Account Available", is_ok, val if val!='--' else "Not Available"))
                         if not is_ok: all_ok = False
-                    else:
-                        checks.append(("Bank Account Available", False, "Bank column not found"))
 
                     for name, status, value in checks:
                         if status:
@@ -152,15 +153,32 @@ if 'logged_in' in st.session_state and st.session_state['logged_in']:
                     if all_ok:
                         st.success(f"✅ ELIGIBLE - Member {member_id} for Rs.{loan_amount}")
                         st.balloons()
-                        st.info("Application Submitted to Next Level: SHG Leader -> Bank Officer")
-                        st.write("**Status: PENDING WITH BANK OFFICER**")
+                        # STORE FOR SUBMIT
+                        st.session_state['eligible_member'] = member_id
+                        st.session_state['eligible_amount'] = loan_amount
+                        st.session_state['show_submit'] = True
                     else:
-                        st.error(f"❌ NOT ELIGIBLE - Member {member_id}")
-                        st.warning("Complete verification at Ellapuram Block office")
+                        st.error(f"❌ NOT ELIGIBLE - {member_id}")
+                        st.session_state['show_submit'] = False
                 else:
                     st.error(f"Member ID {member_id} not found")
-            else:
-                st.error("Enter Member ID")
+
+        # SHOW SUBMIT BUTTON ONLY AFTER ELIGIBLE
+        if st.session_state.get('show_submit', False):
+            st.info("You are eligible! Click below to submit application to Bank Officer.")
+            if st.button("📤 Submit Application to Next Level (Bank Officer)"):
+                new_app = {
+                    'id': st.session_state['eligible_member'],
+                    'amount': st.session_state['eligible_amount'],
+                    'status': 'PENDING WITH BANK OFFICER'
+                }
+                # Avoid duplicate
+                if not any(x['id']==new_app['id'] for x in st.session_state['pending_apps']):
+                    st.session_state['pending_apps'].append(new_app)
+                st.success(f"Application for {new_app['id']} Submitted Successfully!")
+                st.write("Status: **PENDING WITH BANK OFFICER** - Wait for approval")
+                st.session_state['show_submit'] = False
+
 else:
     st.title("SHG Loan Eligibility - Ellapuram")
     st.info("👈 Login from left sidebar")
