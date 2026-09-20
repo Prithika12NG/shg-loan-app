@@ -37,54 +37,47 @@ if st.sidebar.button("Login"):
 df = load_data()
 
 def find_col(df, col_type):
-    # FIXED: To avoid Marital Status bug
     cols_lower = {c.lower().strip(): c for c in df.columns}
-
     if col_type == "status":
-        # Priority 1: Exact 'Status' column
         if 'status' in cols_lower:
             return cols_lower['status']
-        # Priority 2: Check values contain Active/Inactive
         for c in df.columns:
             if 'marital' in c.lower():
                 continue
             try:
-                vals = df[c].astype(str).str.lower().tolist()[:50]
-                if any(v == 'active' or v == 'inactive' for v in vals):
+                vals = [str(v).lower().strip() for v in df[c].tolist()[:50]]
+                if 'active' in vals or 'inactive' in vals:
                     return c
             except:
                 pass
         return None
-
     if col_type == "ekyc":
         for c in df.columns:
-            if 'ekyc' in c.lower() or 'e_kyc' in c.lower() or 'kyc' in c.lower():
+            if 'ekyc' in c.lower() or 'kyc' in c.lower():
                 return c
-
     if col_type == "mobile":
         for c in df.columns:
             if 'mobile' in c.lower() or 'phone' in c.lower():
                 return c
-
     if col_type == "bank":
         for c in df.columns:
-            if 'bank' in c.lower() or 'account' in c.lower():
-                # Avoid loan account
-                if 'loan' not in c.lower():
-                    return c
+            if 'bank' in c.lower() and 'loan' not in c.lower():
+                return c
+            if c.lower().strip() in ['account','bank account','bank_account']:
+                return c
     return None
 
 if 'logged_in' in st.session_state and st.session_state['logged_in']:
 
     if st.session_state['role'] == "Bank Officer":
         st.title("🏦 Bank Officer Dashboard")
-        st.subheader("Ellapuram Block - Approved Applications")
+        st.subheader("Ellapuram Block - Applications")
         if df is not None:
             st.dataframe(df.head(30))
             sel = st.selectbox("Select Member ID", df.iloc[:,0].astype(str))
             c1,c2 = st.columns(2)
             with c1:
-                if st.button("✅ Approve & Disburse"): st.success(f"{sel} Loan Approved!")
+                if st.button("✅ Approve"): st.success(f"{sel} Approved!")
             with c2:
                 if st.button("❌ Reject"): st.error(f"{sel} Rejected")
 
@@ -92,7 +85,7 @@ if 'logged_in' in st.session_state and st.session_state['logged_in']:
         st.title("SHG Loan Eligibility Checker")
         st.subheader("Ellapuram Block - Mobile Version")
 
-        member_id = st.text_input("Enter Member ID", value="290047031286")
+        member_id = st.text_input("Enter Member ID", value="290031673652")
         loan_amount = st.number_input("Required Loan Amount (Rs.)", min_value=1000, step=5000, value=10000)
 
         if st.button("Check Eligibility"):
@@ -102,7 +95,6 @@ if 'logged_in' in st.session_state and st.session_state['logged_in']:
 
                 if not found.empty:
                     row = found.iloc[0]
-
                     active_col = find_col(df, "status")
                     ekyc_col = find_col(df, "ekyc")
                     mobile_col = find_col(df, "mobile")
@@ -112,10 +104,11 @@ if 'logged_in' in st.session_state and st.session_state['logged_in']:
                     checks = []
                     all_ok = True
 
-                    # 1. ACTIVE/INACTIVE - FIXED
+                    # 1. ACTIVE CHECK - FIXED: INACTIVE should be RED
                     if active_col:
                         val = str(row[active_col]).strip()
-                        is_active = val.lower() == 'active' or 'active' in val.lower()
+                        # FIXED LOGIC - Only exact ACTIVE is eligible
+                        is_active = val.lower().strip() == 'active'
                         checks.append(("Member Active", is_active, val))
                         if not is_active: all_ok = False
                     else:
@@ -124,7 +117,8 @@ if 'logged_in' in st.session_state and st.session_state['logged_in']:
                     # 2. eKYC
                     if ekyc_col:
                         val = str(row[ekyc_col]).strip()
-                        is_ok = 'verif' in val.lower() or val.lower() in ['yes','verified','1','true','completed']
+                        v = val.lower()
+                        is_ok = v in ['yes','verified','available','completed','1'] or 'verif' in v
                         checks.append(("eKYC Verified", is_ok, val))
                         if not is_ok: all_ok = False
                     else:
@@ -133,16 +127,20 @@ if 'logged_in' in st.session_state and st.session_state['logged_in']:
                     # 3. Mobile
                     if mobile_col:
                         val = str(row[mobile_col]).strip()
-                        is_ok = val.lower() not in ['','nan','none','0'] and len(val) >= 5
-                        checks.append(("Mobile Verified", is_ok, val))
+                        is_ok = val not in ['','--','nan','none','0','not available'] and len(val) >= 5
+                        checks.append(("Mobile Verified", is_ok, val if val!='--' else "Not Available"))
                         if not is_ok: all_ok = False
+                    else:
+                        checks.append(("Mobile Verified", False, "Mobile column not found"))
 
                     # 4. Bank Account
                     if bank_col:
                         val = str(row[bank_col]).strip()
-                        is_ok = val.lower() not in ['','nan','none','0','no'] and len(val) > 3
-                        checks.append(("Bank Account Available", is_ok, val))
+                        is_ok = val not in ['','--','nan','none','0','not available'] and len(val) > 3
+                        checks.append(("Bank Account Available", is_ok, val if val!='--' else "Not Available"))
                         if not is_ok: all_ok = False
+                    else:
+                        checks.append(("Bank Account Available", False, "Bank column not found"))
 
                     for name, status, value in checks:
                         if status:
@@ -154,11 +152,11 @@ if 'logged_in' in st.session_state and st.session_state['logged_in']:
                     if all_ok:
                         st.success(f"✅ ELIGIBLE - Member {member_id} for Rs.{loan_amount}")
                         st.balloons()
-                        st.info(f"Application Submitted to Next Level: SHG Leader -> Bank Officer")
+                        st.info("Application Submitted to Next Level: SHG Leader -> Bank Officer")
                         st.write("**Status: PENDING WITH BANK OFFICER**")
                     else:
-                        st.error(f"❌ NOT ELIGIBLE - {member_id}")
-                        st.warning("Complete verification at Ellapuram office")
+                        st.error(f"❌ NOT ELIGIBLE - Member {member_id}")
+                        st.warning("Complete verification at Ellapuram Block office")
                 else:
                     st.error(f"Member ID {member_id} not found")
             else:
