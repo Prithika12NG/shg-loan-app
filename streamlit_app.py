@@ -12,11 +12,15 @@ def load_data():
         files = glob.glob(os.path.join(script_folder, "*.xlsx"))
     if files:
         try:
-            return pd.read_csv(files[0]) if files[0].endswith('.csv') else pd.read_excel(files[0])
+            df = pd.read_csv(files[0]) if files[0].endswith('.csv') else pd.read_excel(files[0])
+            # Clean column names
+            df.columns = [c.strip() for c in df.columns]
+            return df
         except:
             return None
     return None
 
+# --- LOGIN ---
 st.sidebar.title("🔐 Login")
 role = st.sidebar.selectbox("Select Role", ["SHG Member", "SHG Leader", "Bank Officer"])
 username = st.sidebar.text_input("Username")
@@ -28,70 +32,127 @@ if st.sidebar.button("Login"):
        (role=="SHG Member" and username=="member" and password=="member123"):
         st.session_state['logged_in']=True
         st.session_state['role']=role
-        st.sidebar.success(f"Welcome {role}")
+        st.session_state['user']=username
     else:
         st.session_state['logged_in']=False
-        st.sidebar.error("Use officer/officer123")
+        st.sidebar.error("Wrong! Use officer/officer123")
 
 df = load_data()
+
+def find_col(df, keywords):
+    # Auto find column name like "ekyc", "mobile", "bank", "active"
+    for c in df.columns:
+        cl = c.lower()
+        for k in keywords:
+            if k in cl:
+                return c
+    return None
 
 if 'logged_in' in st.session_state and st.session_state['logged_in']:
 
     if st.session_state['role'] == "Bank Officer":
         st.title("🏦 Bank Officer Dashboard")
-        st.subheader("Ellapuram Block - 17562 Members")
+        st.subheader("Ellapuram Block - Applications for Approval")
         if df is not None:
+            # Show members who passed eligibility
             st.dataframe(df.head(30))
-            sel = st.selectbox("Select Member", df.iloc[:,0].astype(str))
+            sel = st.selectbox("Select Member ID for Action", df.iloc[:,0].astype(str))
             c1,c2=st.columns(2)
             with c1:
-                if st.button("✅ Approve"): st.success(f"{sel} Approved!")
+                if st.button("✅ Approve & Disburse"): st.success(f"Loan for {sel} Approved & Sent to Bank!")
             with c2:
-                if st.button("❌ Reject"): st.error(f"{sel} Rejected!")
+                if st.button("❌ Reject"): st.error(f"{sel} Rejected - Inform SHG Leader")
 
-    else:
+    else: # Member & Leader
         st.title("SHG Loan Eligibility Checker")
         st.subheader("Ellapuram Block - Mobile Version")
 
-        if df is not None:
-            member_id = st.text_input("Enter Member ID")
-            loan_amount = st.number_input("Required Loan Amount", min_value=1000, step=1000, value=10000)
+        member_id = st.text_input("Enter Member ID", value="290031673652")
+        loan_amount = st.number_input("Required Loan Amount (Rs.)", min_value=1000, step=5000, value=10000)
 
-            if st.button("Check Eligibility"):
+        if st.button("Check Eligibility"):
+            if df is not None and member_id:
                 mask = df.astype(str).apply(lambda x: x.str.contains(member_id, na=False)).any(axis=1)
                 found = df[mask]
+
                 if not found.empty:
                     row = found.iloc[0]
 
-                    # Auto find savings column silently
-                    savings_col = None
-                    for c in df.columns:
-                        if any(k in c.lower() for k in ['saving','thrift','balance','sav']):
-                            savings_col = c
-                            break
+                    # --- AUTO DETECT YOUR COLUMNS ---
+                    active_col = find_col(df, ['active','status','member status'])
+                    ekyc_col = find_col(df, ['ekyc','e-kyc','kyc'])
+                    mobile_col = find_col(df, ['mobile','phone','mobile verified'])
+                    bank_col = find_col(df, ['bank','account','bank account'])
 
-                    if savings_col:
-                        savings_val = float(str(row[savings_col]).replace(',',''))
-                        max_elig = savings_val * 4
+                    st.write("### Verification Details:")
 
-                        st.write(f"**Your Savings:** Rs.{savings_val}")
-                        st.write(f"**Asking Amount:** Rs.{loan_amount}")
-                        st.write(f"**Max Eligible (4x Savings):** Rs.{max_elig}")
+                    checks = []
+                    all_ok = True
 
-                        if loan_amount <= max_elig:
-                            st.success(f"✅ ELIGIBLE for Rs.{loan_amount}")
-                            st.balloons()
-                        else:
-                            st.error(f"❌ NOT ELIGIBLE for Rs.{loan_amount}")
-                            st.info(f"Reduce amount to below Rs.{max_elig}")
+                    # 1. Active Check
+                    if active_col:
+                        val = str(row[active_col]).lower()
+                        is_active = 'active' in val or val in ['yes','1','y','true']
+                        checks.append(("Member Active", is_active, row[active_col]))
+                        if not is_active: all_ok = False
                     else:
-                        st.error("Savings data not found")
-                else:
-                    st.error(f"Member ID {member_id} not found")
-        else:
-            st.warning("Data file not found")
+                        checks.append(("Member Active", True, "Column not found - Assumed Active"))
 
+                    # 2. eKYC Check
+                    if ekyc_col:
+                        val = str(row[ekyc_col]).lower()
+                        is_ekyc = 'verified' in val or 'yes' in val or val in ['1','y','true','completed']
+                        checks.append(("eKYC Verified", is_ekyc, row[ekyc_col]))
+                        if not is_ekyc: all_ok = False
+                    else:
+                        checks.append(("eKYC Verified", True, "Column not found"))
+
+                    # 3. Mobile Check
+                    if mobile_col:
+                        val = str(row[mobile_col]).lower()
+                        # Check if column is "mobile verified" or just mobile number exists
+                        if 'verif' in mobile_col.lower():
+                            is_mob = 'verified' in val or 'yes' in val or val in ['1','y']
+                        else:
+                            is_mob = val not in ['','nan','none','0'] and len(val) >= 5
+                        checks.append(("Mobile Verified", is_mob, row[mobile_col]))
+                        if not is_mob: all_ok = False
+                    else:
+                        checks.append(("Mobile Verified", True, "Column not found"))
+
+                    # 4. Bank Account Check
+                    if bank_col:
+                        val = str(row[bank_col]).lower()
+                        is_bank = val not in ['','nan','none','0','no'] and len(val) > 3
+                        checks.append(("Bank Account Available", is_bank, row[bank_col]))
+                        if not is_bank: all_ok = False
+                    else:
+                        checks.append(("Bank Account Available", True, "Column not found"))
+
+                    # Show checks
+                    for name, status, value in checks:
+                        if status:
+                            st.success(f"✅ {name}: {value}")
+                        else:
+                            st.error(f"❌ {name}: {value} - FAILED")
+
+                    st.markdown("---")
+                    # FINAL DECISION
+                    if all_ok:
+                        st.success(f"✅ ELIGIBLE - Member {member_id} is eligible for Rs.{loan_amount}")
+                        st.balloons()
+                        st.info(f"Application for Rs.{loan_amount} submitted to next level: SHG Leader -> Bank Officer")
+                        st.write("Status: **PENDING WITH BANK OFFICER**")
+                        # Save to session for officer to see
+                        st.session_state['last_applied'] = member_id
+                    else:
+                        st.error(f"❌ NOT ELIGIBLE - Member {member_id} failed verification")
+                        st.warning("Please complete eKYC / Mobile verification / Bank Account linking in Ellapuram office")
+                else:
+                    st.error(f"Member ID {member_id} not found in your data")
+            else:
+                st.error("Enter Member ID")
 else:
     st.title("SHG Loan Eligibility - Ellapuram")
-    st.info("👈 Login from left sidebar")
+    st.info("👈 Login from left sidebar to check")
     st.code("Officer: officer / officer123\nLeader: leader / leader123\nMember: member / member123")
