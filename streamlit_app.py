@@ -68,7 +68,7 @@ if 'logged_in' in st.session_state and st.session_state['logged_in']:
         st.subheader("Ellapuram Block - Mobile Version")
 
         member_id = st.text_input("Enter Member ID", value="290031673652")
-        loan_amount = st.number_input("Required Loan Amount (Rs.)", min_value=1000, step=5000, value=10000)
+        loan_amount = st.number_input("Required Loan Amount (Rs.)", min_value=10000, step=50000, value=100000)
 
         if st.button("Check Eligibility"):
             if df is not None and member_id:
@@ -79,7 +79,7 @@ if 'logged_in' in st.session_state and st.session_state['logged_in']:
                     row = found.iloc[0]
 
                     # --- AUTO DETECT YOUR COLUMNS ---
-                    active_col = find_col(df, ['active','status','member status'])
+                    active_col = find_col(df, ['active','status','Status (Active/Inactive)'])
                     ekyc_col = find_col(df, ['ekyc','e-kyc','kyc'])
                     mobile_col = find_col(df, ['mobile','phone','mobile verified'])
                     bank_col = find_col(df, ['bank','account','bank account'])
@@ -93,7 +93,7 @@ if 'logged_in' in st.session_state and st.session_state['logged_in']:
                     if active_col:
                         val = str(row[active_col]).lower()
                         is_active = 'active' in val or val in ['yes','1','y','true']
-                        checks.append(("Member Active", is_active, row[active_col]))
+                        checks.append(("Status (Active/Inactive)", is_active, row[active_col]))
                         if not is_active: all_ok = False
                     else:
                         checks.append(("Member Active", True, "Column not found - Assumed Active"))
