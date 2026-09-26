@@ -145,15 +145,30 @@ else:
         statuses = st.session_state['app_status']
         if filter_panchayat:
             statuses = {k: v for k, v in statuses.items() if v.get('panchayat') == filter_panchayat}
-        total = len(statuses)
+
         if filter_panchayat:
             p_bmmu = len([x for x in st.session_state['pending_bmmu'] if x.get('panchayat') == filter_panchayat])
             p_bank = len([x for x in st.session_state['pending_officer'] if x.get('panchayat') == filter_panchayat])
         else:
             p_bmmu = len(st.session_state['pending_bmmu'])
             p_bank = len(st.session_state['pending_officer'])
-        rejected = len([v for v in statuses.values() if "REJECTED" in v['status']])
-        accepted = len([v for v in statuses.values() if "APPROVED" in v['status'] or "DISBURSED" in v['status']])
+
+        # --- FIXED LOGIC FOR BANK OFFICER ---
+        if role == "Bank Officer":
+            rejected = len([v for v in statuses.values() if "REJECTED BY BANK" in v['status']])
+            accepted = len([v for v in statuses.values() if "DISBURSED" in v['status']])
+            total = p_bank + rejected + accepted
+            p_bmmu = 0 # Bank officer should not see BMMU pending
+        elif role == "BMMU":
+            rejected = len([v for v in statuses.values() if "REJECTED BY BMMU" in v['status']])
+            accepted = len([v for v in statuses.values() if "DISBURSED" in v['status']])
+            forwarded = len([v for v in statuses.values() if "PENDING WITH BANK" in v['status']])
+            total = p_bmmu + p_bank + rejected + accepted + forwarded
+        else: # Panchayat
+            rejected = len([v for v in statuses.values() if "REJECTED" in v['status']])
+            accepted = len([v for v in statuses.values() if "APPROVED" in v['status'] or "DISBURSED" in v['status']])
+            total = len(statuses)
+
         return total, p_bmmu, p_bank, rejected, accepted
 
     if st.session_state['page'] == 'dashboard':
@@ -205,8 +220,6 @@ else:
                 found = df[mask]
                 if not found.empty:
                     row = found.iloc[0]
-
-                    # PANCHAYAT VALIDATION - BLOCK OTHER PANCHAYAT
                     panchayat_col = find_col(df, "panchayat")
                     if panchayat_col:
                         member_panchayat = str(row[panchayat_col]).strip()
@@ -214,7 +227,6 @@ else:
                             st.error("ACCESS DENIED - This member is not from your Panchayat")
                             st.warning(f"This Member ID {member_id} belongs to {member_panchayat} Panchayat, not your {panchayat_name} Panchayat. You can only submit members of your own panchayat.")
                             st.stop()
-
                     ac = find_col(df, "status")
                     ek = find_col(df, "ekyc")
                     mo = find_col(df, "mobile")
